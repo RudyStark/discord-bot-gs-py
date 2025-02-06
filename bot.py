@@ -43,42 +43,44 @@ def create_gs_embed():
         timestamp=datetime.datetime.now()
     )
 
-    # Emojis pour chaque type d'action
-    DEFENSE_EMOJI = "🛡️"
-    TEST_EMOJI = "🔍"
-    ATTACK_EMOJI = "⚔️"
+    # Trier les joueurs
+    sorted_players = sorted(bot.gs_data['players'].items(), key=lambda x: x[1]["name"].lower())
 
-    # Corps du tableau avec les mentions et formatage amélioré
-    player_blocks = []
-    for user_id, player_info in sorted(bot.gs_data['players'].items(), key=lambda x: x[1]["name"].lower()):
-        # Récupérer les valeurs avec '-' comme valeur par défaut
-        def_value = bot.gs_data['defenses'].get(user_id, '-')
-        test_value = bot.gs_data['tests'].get(user_id, '-')
-        atq_value = bot.gs_data['attacks'].get(user_id, '-')
-        stars = "⭐" * bot.gs_data['stars'].get(user_id, 0)
+    # Diviser en deux groupes de 12
+    players_per_field = 12
 
-        # Créer le bloc pour ce joueur
-        player_block = [
-            f"**{player_info['mention']}** :",
-            f"{DEFENSE_EMOJI} Déf: `{def_value}`",
-            f"{TEST_EMOJI} Test: `{test_value}`",
-            f"{ATTACK_EMOJI} Atq: `{atq_value}`",
-            f"{stars}" if stars else "",
-            "─────────────────"  # Séparateur
-        ]
-        player_blocks.append("\n".join(player_block))
+    # Diviser les joueurs en deux groupes
+    for i in range(0, len(sorted_players), players_per_field):
+        group = sorted_players[i:i + players_per_field]
+        player_blocks = []
 
-    # Joindre tous les blocs de joueurs
-    all_players = "\n".join(player_blocks)
+        for user_id, player_info in group:
+            def_value = bot.gs_data['defenses'].get(user_id, '-')
+            test_value = bot.gs_data['tests'].get(user_id, '-')
+            atq_value = bot.gs_data['attacks'].get(user_id, '-')
+            stars = "⭐" * bot.gs_data['stars'].get(user_id, 0)
 
-    # Ajouter le champ principal avec tous les joueurs
-    if player_blocks:
-        embed.add_field(
-            name=f"Participants ({len(bot.gs_data['players'])}/{MAX_PLAYERS})",
-            value=all_players,
-            inline=False
-        )
-    else:
+            player_block = [
+                f"**{player_info['mention']}** :",
+                f"{DEFENSE_EMOJI} Déf: `{def_value}`",
+                f"{TEST_EMOJI} Test: `{test_value}`",
+                f"{ATTACK_EMOJI} Atq: `{atq_value}`",
+                f"{stars}" if stars else "",
+                "─────────────────"  # Séparateur
+            ]
+            player_blocks.append("\n".join(player_block))
+
+        # Ajouter un champ pour ce groupe
+        field_value = "\n".join(player_blocks)
+        if field_value:
+            field_name = "Participants Groupe 1" if i == 0 else "Participants Groupe 2"
+            embed.add_field(
+                name=f"{field_name} ({len(bot.gs_data['players'])}/{MAX_PLAYERS})",
+                value=field_value,
+                inline=False
+            )
+
+    if not bot.gs_data['players']:
         embed.add_field(
             name=f"Participants (0/{MAX_PLAYERS})",
             value="Aucun joueur",
@@ -105,7 +107,7 @@ async def update_gs_message(channel):
 
 def has_required_role(interaction: discord.Interaction) -> bool:
     """Vérifie si l'utilisateur a le rôle requis"""
-    REQUIRED_ROLE_ID = 1336091937567936596
+    REQUIRED_ROLE_ID = 1333836152108482593
     return any(role.id == REQUIRED_ROLE_ID for role in interaction.user.roles)
 
 @bot.tree.command(name="init_gs", description="Initialiser une nouvelle Guerre Sainte avec les joueurs mentionnés")
@@ -125,41 +127,52 @@ async def init_gs(
     joueur5: Optional[discord.Member] = None
 ):
     """Initialise une nouvelle GS avec les joueurs mentionnés"""
-    if not has_required_role(interaction):
+    try:
+        # Vérifier les permissions d'abord
+        if not has_required_role(interaction):
             await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
             return
 
-    if interaction.channel_id != GS_CHANNEL_ID:
-        await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
-        return
+        if interaction.channel_id != GS_CHANNEL_ID:
+            await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
+            return
 
-    # Collecter tous les joueurs non-None
-    players = [j for j in [joueur1, joueur2, joueur3, joueur4, joueur5] if j is not None]
+        # Collecter tous les joueurs non-None
+        players = [j for j in [joueur1, joueur2, joueur3, joueur4, joueur5] if j is not None]
 
-    if len(players) > MAX_PLAYERS:
-        await interaction.response.send_message(f"Erreur: Maximum {MAX_PLAYERS} joueurs autorisés !", ephemeral=True)
-        return
+        if len(players) > MAX_PLAYERS:
+            await interaction.response.send_message(f"Erreur: Maximum {MAX_PLAYERS} joueurs autorisés !", ephemeral=True)
+            return
 
-    # Réinitialisation des données
-    bot.gs_data['players'] = {}
-    bot.gs_data['defenses'] = {}
-    bot.gs_data['tests'] = {}
-    bot.gs_data['attacks'] = {}
-    bot.gs_data['stars'] = {}
-    bot.gs_data['message_id'] = None
+        # Réinitialisation des données
+        bot.gs_data['players'] = {}
+        bot.gs_data['defenses'] = {}
+        bot.gs_data['tests'] = {}
+        bot.gs_data['attacks'] = {}
+        bot.gs_data['stars'] = {}
+        bot.gs_data['message_id'] = None
 
-    # Ajout des joueurs
-    for player in players:
-        bot.gs_data['players'][player.id] = {
-            "name": player.display_name,
-            "mention": player.mention
-        }
+        # Ajout des joueurs
+        for player in players:
+            bot.gs_data['players'][player.id] = {
+                "name": player.display_name,
+                "mention": player.mention
+            }
 
-    # Envoyer et épingler le message
-    await interaction.response.send_message(embed=create_gs_embed())
-    message = await interaction.original_response()
-    await message.pin(reason="Tableau GS")
-    bot.gs_data['message_id'] = message.id
+        # Créer et envoyer le message d'abord
+        message = await interaction.channel.send(embed=create_gs_embed())
+
+        # Épingler le message
+        await message.pin(reason="Tableau GS")
+        bot.gs_data['message_id'] = message.id
+
+        # Répondre à l'interaction avec un message de confirmation
+        await interaction.response.send_message("✅ Guerre Sainte initialisée !", ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in init_gs: {str(e)}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Une erreur s'est produite lors de l'initialisation.", ephemeral=True)
 
 @bot.tree.command(name="add_player", description="Ajouter un ou plusieurs joueurs à la GS en cours")
 @app_commands.describe(
