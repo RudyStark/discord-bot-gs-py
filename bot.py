@@ -12,6 +12,11 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 GS_CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
 MAX_PLAYERS = 26
 
+# Emojis pour chaque type d'action
+DEFENSE_EMOJI = "🛡️"
+TEST_EMOJI = "🔍"
+ATTACK_EMOJI = "⚔️"
+
 class GSBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
