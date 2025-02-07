@@ -107,8 +107,13 @@ async def update_gs_message(channel):
 
 def has_required_role(interaction: discord.Interaction) -> bool:
     """Vérifie si l'utilisateur a le rôle requis"""
-    REQUIRED_ROLE_ID = 1333836152108482593
-    return any(role.id == REQUIRED_ROLE_ID for role in interaction.user.roles)
+    REQUIRED_ROLE_ID = 1336091937567936596
+    user_roles = [role.id for role in interaction.user.roles]
+    print(f"User roles: {user_roles}")
+    print(f"Required role: {REQUIRED_ROLE_ID}")
+    has_role = any(role.id == REQUIRED_ROLE_ID for role in interaction.user.roles)
+    print(f"Has required role: {has_role}")
+    return has_role
 
 @bot.tree.command(name="init_gs", description="Initialiser une nouvelle Guerre Sainte avec les joueurs mentionnés")
 @app_commands.describe(
