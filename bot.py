@@ -26,18 +26,314 @@ class GSBot(commands.Bot):
 
         # Structure de données pour la GS
         self.gs_data = {
-            'players': {},  # Format: {user_id: {"name": display_name, "mention": mention}}
+            'players': {},
             'defenses': {},
             'tests': {},
             'attacks': {},
-            'stars': {},  # Pour stocker le nombre d'étoiles
-            'message_id': None  # Pour stocker l'ID du message épinglé
+            'stars': {},
+            'message_id': None
+        }
+
+    async def setup_hook(self):
+        await self.tree.sync()
+
+# Initialisation du bot
+bot = GSBot()
+
+class ActionView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+        self.action_type = None
+
+    @discord.ui.button(label="Défense", emoji="🛡️", style=discord.ButtonStyle.primary)
+    async def defense_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_number_select(interaction, "defense")
+
+    @discord.ui.button(label="Test", emoji="🔍", style=discord.ButtonStyle.primary)
+    async def test_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_number_select(interaction, "test")
+
+    @discord.ui.button(label="Attaque", emoji="⚔️", style=discord.ButtonStyle.primary)
+    async def attack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_number_select(interaction, "attack")
+
+    async def show_number_select(self, interaction: discord.Interaction, action_type: str):
+        try:
+            self.action_type = action_type
+            select = ActionSelect()
+            self.clear_items()
+            self.add_item(select)
+
+            embed = discord.Embed(
+                title=f"Choisissez votre {action_type}",
+                description="Sélectionnez un numéro entre 1 et 20",
+                color=discord.Color.blue()
+            )
+
+            await interaction.response.edit_message(embed=embed, view=self)
+        except Exception as e:
+            print(f"Erreur dans show_number_select: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Une erreur s'est produite.", ephemeral=True)
+
+class ActionSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=str(i), value=str(i))
+            for i in range(1, 21)
+        ]
+        super().__init__(placeholder="Choisissez un numéro", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            view = self.view
+            action_value = int(self.values[0])
+
+            if view.action_type == "defense":
+                bot.gs_data['defenses'][interaction.user.id] = action_value
+                message = f"✅ Défense {action_value} enregistrée."
+            elif view.action_type == "test":
+                bot.gs_data['tests'][interaction.user.id] = action_value
+                message = f"✅ Test {action_value} enregistré."
+            else:
+                bot.gs_data['attacks'][interaction.user.id] = action_value
+                message = f"✅ Attaque {action_value} enregistrée."
+
+            await interaction.response.edit_message(content=message, embed=None, view=None)
+            await update_gs_message(interaction.channel)
+        except Exception as e:
+            print(f"Erreur dans le callback de sélection: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Une erreur s'est produite.", ephemeral=True)
+
+# Classes pour le menu admin
+class GSManagementView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Initialiser GS", emoji="🆕", style=discord.ButtonStyle.success)
+    async def init_gs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Utilisez /init_gs pour initialiser une nouvelle GS", ephemeral=True)
+
+    @discord.ui.button(label="Reset Actions", emoji="🔄", style=discord.ButtonStyle.danger)
+    async def reset_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            if not has_required_role(interaction):
+                await interaction.response.send_message(
+                    "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                    ephemeral=True
+                )
+                return
+
+            if interaction.channel_id != GS_CHANNEL_ID:
+                await interaction.response.send_message(
+                    "Cette commande ne peut être utilisée que dans le salon GS !",
+                    ephemeral=True
+                )
+                return
+
+            if not bot.gs_data['players']:
+                await interaction.response.send_message(
+                    "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
+                    ephemeral=True
+                )
+                return
+
+            # Sauvegarder les données importantes
+            players_backup = bot.gs_data['players'].copy()
+            message_id_backup = bot.gs_data['message_id']
+
+            # Réinitialiser les actions
+            bot.gs_data['defenses'] = {}
+            bot.gs_data['tests'] = {}
+            bot.gs_data['attacks'] = {}
+
+            # Restaurer les données sauvegardées
+            bot.gs_data['players'] = players_backup
+            bot.gs_data['message_id'] = message_id_backup
+
+            await interaction.response.send_message(
+                "✅ Toutes les actions ont été réinitialisées. La liste des participants reste inchangée.",
+                ephemeral=True
+            )
+
+            await update_gs_message(interaction.channel)
+
+        except Exception as e:
+            print(f"Erreur lors de la réinitialisation des actions : {e}")
+            await interaction.response.send_message(
+                "❌ Une erreur s'est produite lors de la réinitialisation des actions.",
+                ephemeral=True
+            )
+
+    @discord.ui.button(label="Vérifier Actions", emoji="📋", style=discord.ButtonStyle.primary)
+    async def check_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Utilisez /check_actions pour voir les actions manquantes", ephemeral=True)
+
+    @discord.ui.button(label="Retour", emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="Menu Administrateur",
+            description="Sélectionnez une catégorie",
+            color=discord.Color.blue()
+        )
+        view = AdminCategoryView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+class PlayerManagementView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Ajouter Joueur", emoji="➕", style=discord.ButtonStyle.success)
+    async def add_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_required_role(interaction):
+            await interaction.response.send_message(
+                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            return
+
+        channel = interaction.guild.get_channel(GS_CHANNEL_ID)
+        if not channel:
+            await interaction.response.send_message(
+                "❌ Erreur : impossible d'accéder au salon GS.",
+                ephemeral=True
+            )
+            return
+
+        # Compter les membres éligibles
+        eligible_members = [
+            member for member in channel.members
+            if not member.bot and member.id not in bot.gs_data['players']
+        ]
+
+        # Cas où il n'y a pas de membres éligibles
+        if len(eligible_members) == 0:
+            await interaction.response.send_message(
+                "❌ Il n'y a actuellement aucun joueur disponible à ajouter à la Guerre Sainte. "
+                "Assurez-vous que les membres que vous souhaitez ajouter sont présents dans le salon.",
+                ephemeral=True
+            )
+            return
+
+        # Si nous avons des membres éligibles, créer la vue avec seulement ces membres
+        view = AddPlayerView(eligible_members)  # Passer uniquement les membres éligibles
+        await interaction.response.send_message(
+            f"👥 Il y a {len(eligible_members)} joueur(s) disponible(s) à ajouter à la Guerre Sainte.",
+            view=view,
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Retirer Joueur", emoji="➖", style=discord.ButtonStyle.danger)
+    async def remove_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Utilisez /remove_player pour retirer des joueurs", ephemeral=True)
+
+    @discord.ui.button(label="Retour", emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="Menu Administrateur",
+            description="Sélectionnez une catégorie",
+            color=discord.Color.blue()
+        )
+        view = AdminCategoryView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+class PerformanceManagementView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Ajouter Étoiles", emoji="⭐", style=discord.ButtonStyle.success)
+    async def add_star_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Utilisez /add_star pour ajouter des étoiles", ephemeral=True)
+
+    @discord.ui.button(label="GG", emoji="🎉", style=discord.ButtonStyle.primary)
+    async def gg_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("Utilisez /gg pour féliciter les participants", ephemeral=True)
+
+    @discord.ui.button(label="Retour", emoji="◀️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="Menu Administrateur",
+            description="Sélectionnez une catégorie",
+            color=discord.Color.blue()
+        )
+        view = AdminCategoryView()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+class AdminCategoryView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+    @discord.ui.button(label="Gestion GS", emoji="📊", style=discord.ButtonStyle.primary)
+    async def gs_management(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_gs_management(interaction)
+
+    @discord.ui.button(label="Gestion Joueurs", emoji="👥", style=discord.ButtonStyle.primary)
+    async def player_management(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_player_management(interaction)
+
+    @discord.ui.button(label="Gestion Performances", emoji="⭐", style=discord.ButtonStyle.primary)
+    async def performance_management(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.show_performance_management(interaction)
+
+    async def show_gs_management(self, interaction: discord.Interaction):
+        view = GSManagementView()
+        embed = discord.Embed(
+            title="📊 Gestion de la GS",
+            description="Sélectionnez une action à effectuer",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def show_player_management(self, interaction: discord.Interaction):
+        view = PlayerManagementView()
+        embed = discord.Embed(
+            title="👥 Gestion des Joueurs",
+            description="Sélectionnez une action à effectuer",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def show_performance_management(self, interaction: discord.Interaction):
+        view = PerformanceManagementView()
+        embed = discord.Embed(
+            title="⭐ Gestion des Performances",
+            description="Sélectionnez une action à effectuer",
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+class GSBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+        super().__init__(command_prefix='!', intents=intents)
+
+        # Structure de données pour la GS
+        self.gs_data = {
+            'players': {},
+            'defenses': {},
+            'tests': {},
+            'attacks': {},
+            'stars': {},
+            'message_id': None
         }
 
     async def setup_hook(self):
         await self.tree.sync()
 
 bot = GSBot()
+
+def has_required_role(interaction: discord.Interaction) -> bool:
+    """Vérifie si l'utilisateur a le rôle requis ou est l'admin"""
+    REQUIRED_ROLE_ID = 1336091937567936596
+    ADMIN_ID = 861536212056408094
+
+    if interaction.user.id == ADMIN_ID:
+        return True
+
+    return any(role.id == REQUIRED_ROLE_ID for role in interaction.user.roles)
 
 def create_gs_embed():
     """Crée un embed Discord avec le tableau GS"""
@@ -48,13 +344,9 @@ def create_gs_embed():
         timestamp=datetime.datetime.now()
     )
 
-    # Trier les joueurs
     sorted_players = sorted(bot.gs_data['players'].items(), key=lambda x: x[1]["name"].lower())
-
-    # Diviser en deux groupes de 12
     players_per_field = 12
 
-    # Diviser les joueurs en deux groupes
     for i in range(0, len(sorted_players), players_per_field):
         group = sorted_players[i:i + players_per_field]
         player_blocks = []
@@ -71,11 +363,10 @@ def create_gs_embed():
                 f"{TEST_EMOJI} Test: `{test_value}`",
                 f"{ATTACK_EMOJI} Atq: `{atq_value}`",
                 f"{stars}" if stars else "",
-                "─────────────────"  # Séparateur
+                "─────────────────"
             ]
             player_blocks.append("\n".join(player_block))
 
-        # Ajouter un champ pour ce groupe
         field_value = "\n".join(player_blocks)
         if field_value:
             field_name = "Participants Groupe 1" if i == 0 else "Participants Groupe 2"
@@ -103,31 +394,93 @@ async def update_gs_message(channel):
             await message.edit(embed=create_gs_embed())
             return True
         except discord.NotFound:
-            # Si le message n'existe plus, on en crée un nouveau
             new_message = await channel.send(embed=create_gs_embed())
             await new_message.pin(reason="Tableau GS")
             bot.gs_data['message_id'] = new_message.id
             return True
     return False
 
-def has_required_role(interaction: discord.Interaction) -> bool:
-    """Vérifie si l'utilisateur a le rôle requis"""
-    REQUIRED_ROLE_ID = 1336091937567936596
-    user_roles = [role.id for role in interaction.user.roles]
-    print(f"User roles: {user_roles}")
-    print(f"Required role: {REQUIRED_ROLE_ID}")
-    has_role = any(role.id == REQUIRED_ROLE_ID for role in interaction.user.roles)
-    print(f"Has required role: {has_role}")
-    return has_role
+# Nouvelle commande admin
+@bot.tree.command(name="admin", description="Accéder au menu d'administration")
+async def admin(interaction: discord.Interaction):
+    """Interface d'administration pour la GS"""
+    try:
+        if not has_required_role(interaction):
+            await interaction.response.send_message(
+                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.channel_id != GS_CHANNEL_ID:
+            await interaction.response.send_message(
+                "Cette commande ne peut être utilisée que dans le salon GS !",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="Menu Administrateur",
+            description="Sélectionnez une catégorie",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="📊 Gestion GS",
+            value="Initialisation, reset et vérification des actions",
+            inline=False
+        )
+        embed.add_field(
+            name="👥 Gestion Joueurs",
+            value="Ajout et retrait de joueurs",
+            inline=False
+        )
+        embed.add_field(
+            name="⭐ Gestion Performances",
+            value="Attribution d'étoiles et félicitations",
+            inline=False
+        )
+
+        view = AdminCategoryView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    except Exception as e:
+        print(f"Erreur dans la commande admin: {e}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("Une erreur s'est produite.", ephemeral=True)
+
+@bot.tree.command(name="action", description="Définir une action (Défense/Test/Attaque)")
+async def action(interaction: discord.Interaction):
+    """Interface unifiée pour définir une action"""
+    try:
+        if interaction.channel_id != GS_CHANNEL_ID:
+            await interaction.response.send_message(
+                "Cette commande ne peut être utilisée que dans le salon GS !",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id not in bot.gs_data['players']:
+            await interaction.response.send_message(
+                f"{interaction.user.mention} vous n'êtes pas dans la liste des joueurs GS !",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="Choisissez votre action",
+            description="Cliquez sur un bouton pour choisir le type d'action",
+            color=discord.Color.blue()
+        )
+
+        view = ActionView()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    except Exception as e:
+        print(f"Erreur dans la commande action: {e}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("Une erreur s'est produite.", ephemeral=True)
 
 @bot.tree.command(name="init_gs", description="Initialiser une nouvelle Guerre Sainte avec les joueurs mentionnés")
-@app_commands.describe(
-    joueur1="Premier joueur (mention)",
-    joueur2="Deuxième joueur (mention)",
-    joueur3="Troisième joueur (mention)",
-    joueur4="Quatrième joueur (mention)",
-    joueur5="Cinquième joueur (mention)"
-)
 async def init_gs(
     interaction: discord.Interaction,
     joueur1: discord.Member,
@@ -136,9 +489,7 @@ async def init_gs(
     joueur4: Optional[discord.Member] = None,
     joueur5: Optional[discord.Member] = None
 ):
-    """Initialise une nouvelle GS avec les joueurs mentionnés"""
     try:
-        # Vérifier les permissions d'abord
         if not has_required_role(interaction):
             await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
             return
@@ -147,14 +498,16 @@ async def init_gs(
             await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
             return
 
-        # Collecter tous les joueurs non-None
+        # Différer la réponse
+        await interaction.response.defer(ephemeral=True)
+        print("Interaction différée avec succès")
+
         players = [j for j in [joueur1, joueur2, joueur3, joueur4, joueur5] if j is not None]
 
         if len(players) > MAX_PLAYERS:
-            await interaction.response.send_message(f"Erreur: Maximum {MAX_PLAYERS} joueurs autorisés !", ephemeral=True)
+            await interaction.followup.send(f"Erreur: Maximum {MAX_PLAYERS} joueurs autorisés !", ephemeral=True)
             return
 
-        # Réinitialisation des données
         bot.gs_data['players'] = {}
         bot.gs_data['defenses'] = {}
         bot.gs_data['tests'] = {}
@@ -162,27 +515,38 @@ async def init_gs(
         bot.gs_data['stars'] = {}
         bot.gs_data['message_id'] = None
 
-        # Ajout des joueurs
         for player in players:
             bot.gs_data['players'][player.id] = {
                 "name": player.display_name,
                 "mention": player.mention
             }
 
-        # Créer et envoyer le message d'abord
-        message = await interaction.channel.send(embed=create_gs_embed())
+        # Créer et envoyer le tableau
+        embed = create_gs_embed()
+        message = await interaction.channel.send(embed=embed)
 
-        # Épingler le message
-        await message.pin(reason="Tableau GS")
+        try:
+            await message.pin(reason="Tableau GS")
+        except discord.Forbidden:
+            pass
+
         bot.gs_data['message_id'] = message.id
 
-        # Répondre à l'interaction avec un message de confirmation
-        await interaction.response.send_message("✅ Guerre Sainte initialisée !", ephemeral=True)
+        # Confirmation avec followup
+        await interaction.followup.send("✅ Guerre Sainte initialisée !", ephemeral=True)
+        print("Guerre Sainte initialisée avec succès")
+
+    except discord.NotFound:
+        print("Erreur : Message introuvable")
+        await interaction.followup.send("❌ Une erreur s'est produite : message introuvable.", ephemeral=True)
+
+    except discord.HTTPException as e:
+        print(f"Erreur HTTP: {e}")
+        await interaction.followup.send("❌ Une erreur HTTP s'est produite.", ephemeral=True)
 
     except Exception as e:
-        print(f"Error in init_gs: {str(e)}")
-        if not interaction.response.is_done():
-            await interaction.response.send_message("❌ Une erreur s'est produite lors de l'initialisation.", ephemeral=True)
+        print(f"Erreur inattendue: {str(e)}")
+        await interaction.followup.send("❌ Une erreur s'est produite lors de l'initialisation.", ephemeral=True)
 
 @bot.tree.command(name="add_player", description="Ajouter un ou plusieurs joueurs à la GS en cours")
 @app_commands.describe(
@@ -198,8 +562,8 @@ async def add_player(
 ):
     """Ajoute des joueurs à la GS en cours"""
     if not has_required_role(interaction):
-            await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
-            return
+        await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
 
     if interaction.channel_id != GS_CHANNEL_ID:
         await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
@@ -233,10 +597,8 @@ async def add_player(
     if already_present:
         response.append(f"⚠️ Déjà présent(s): {', '.join(already_present)}")
 
-    # D'abord répondre à l'interaction
     await interaction.response.send_message("\n".join(response), ephemeral=True)
 
-    # Puis mettre à jour le message épinglé
     if bot.gs_data['message_id']:
         try:
             message = await interaction.channel.fetch_message(bot.gs_data['message_id'])
@@ -260,8 +622,8 @@ async def remove_player(
 ):
     """Retire des joueurs de la GS en cours"""
     if not has_required_role(interaction):
-            await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
-            return
+        await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
 
     if interaction.channel_id != GS_CHANNEL_ID:
         await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
@@ -275,7 +637,6 @@ async def remove_player(
     # Collecter les joueurs à retirer
     players_to_remove = [j for j in [joueur1, joueur2, joueur3] if j is not None]
 
-    # Retirer les joueurs
     removed_players = []
     not_found = []
     for player in players_to_remove:
@@ -289,7 +650,6 @@ async def remove_player(
         else:
             not_found.append(player.mention)
 
-    # Préparer le message de réponse
     response = []
     if removed_players:
         response.append(f"✅ Joueur(s) retiré(s): {', '.join(removed_players)}")
@@ -297,99 +657,6 @@ async def remove_player(
         response.append(f"❌ Non trouvé(s): {', '.join(not_found)}")
 
     await interaction.response.send_message("\n".join(response), embed=create_gs_embed())
-
-@bot.tree.command(name="def", description="Définir une défense (1-20)")
-async def defense(interaction: discord.Interaction, target: int):
-    """Enregistre une défense pour un joueur"""
-    if interaction.channel_id != GS_CHANNEL_ID:
-        await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
-        return
-
-    if interaction.user.id not in bot.gs_data['players']:
-        await interaction.response.send_message(
-            f"{interaction.user.mention} vous n'êtes pas dans la liste des joueurs GS !",
-            ephemeral=True
-        )
-        return
-
-    # Vérifier que la valeur est entre 1 et 20
-    if target < 1 or target > 20:
-        await interaction.response.send_message(
-            f"❌ La valeur doit être comprise entre 1 et 20 !",
-            ephemeral=True
-        )
-        return
-
-    # Enregistrer la défense
-    bot.gs_data['defenses'][interaction.user.id] = target
-
-    # D'abord répondre à l'interaction avec un message éphémère
-    await interaction.response.send_message(f"✅ Défense {target} enregistrée.", ephemeral=True)
-
-    # Ensuite mettre à jour le message avec update_gs_message
-    await update_gs_message(interaction.channel)
-
-@bot.tree.command(name="test", description="Définir un test (1-20)")
-async def test(interaction: discord.Interaction, target: int):
-    """Enregistre un test pour un joueur"""
-    if interaction.channel_id != GS_CHANNEL_ID:
-        await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
-        return
-
-    if interaction.user.id not in bot.gs_data['players']:
-        await interaction.response.send_message(
-            f"{interaction.user.mention} vous n'êtes pas dans la liste des joueurs GS !",
-            ephemeral=True
-        )
-        return
-
-    # Vérifier que la valeur est entre 1 et 20
-    if target < 1 or target > 20:
-        await interaction.response.send_message(
-            f"❌ La valeur doit être comprise entre 1 et 20 !",
-            ephemeral=True
-        )
-        return
-
-    # Enregistrer le test
-    bot.gs_data['tests'][interaction.user.id] = target
-
-    # D'abord répondre à l'interaction avec un message éphémère
-    await interaction.response.send_message(f"✅ Test {target} enregistré.", ephemeral=True)
-
-    # Ensuite mettre à jour le message avec update_gs_message
-    await update_gs_message(interaction.channel)
-
-@bot.tree.command(name="atq", description="Définir une attaque (1-20)")
-async def attack(interaction: discord.Interaction, target: int):
-    """Enregistre une attaque pour un joueur"""
-    if interaction.channel_id != GS_CHANNEL_ID:
-        await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
-        return
-
-    if interaction.user.id not in bot.gs_data['players']:
-        await interaction.response.send_message(
-            f"{interaction.user.mention} vous n'êtes pas dans la liste des joueurs GS !",
-            ephemeral=True
-        )
-        return
-
-    # Vérifier que la valeur est entre 1 et 20
-    if target < 1 or target > 20:
-        await interaction.response.send_message(
-            f"❌ La valeur doit être comprise entre 1 et 20 !",
-            ephemeral=True
-        )
-        return
-
-    # Enregistrer l'attaque
-    bot.gs_data['attacks'][interaction.user.id] = target
-
-    # D'abord répondre à l'interaction avec un message éphémère
-    await interaction.response.send_message(f"✅ Attaque {target} enregistrée.", ephemeral=True)
-
-    # Ensuite mettre à jour le message avec update_gs_message
-    await update_gs_message(interaction.channel)
 
 @bot.tree.command(name="reset_player", description="Réinitialiser une action spécifique d'un joueur")
 @app_commands.describe(
@@ -420,7 +687,6 @@ async def reset_player(
         await interaction.response.send_message(f"❌ {joueur.mention} n'est pas dans la liste des joueurs GS !", ephemeral=True)
         return
 
-    # Réinitialiser l'action spécifiée
     action_value = action.value
     message = ""
 
@@ -448,18 +714,15 @@ async def reset_player(
         else:
             message = f"ℹ️ {joueur.mention} n'avait pas d'attaque enregistrée."
 
-    # D'abord répondre à l'interaction
     await interaction.response.send_message(message, ephemeral=True)
-
-    # Puis mettre à jour le message épinglé
     await update_gs_message(interaction.channel)
 
 @bot.tree.command(name="reset_all_actions", description="Réinitialiser toutes les actions de tous les joueurs")
 async def reset_all_actions(interaction: discord.Interaction):
     """Réinitialise toutes les actions tout en gardant la liste des joueurs"""
     if not has_required_role(interaction):
-            await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
-            return
+        await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
 
     if interaction.channel_id != GS_CHANNEL_ID:
         await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
@@ -469,26 +732,21 @@ async def reset_all_actions(interaction: discord.Interaction):
         await interaction.response.send_message("Aucune GS n'est initialisée. Utilisez d'abord /init_gs", ephemeral=True)
         return
 
-    # Garder la liste des joueurs et message_id mais réinitialiser toutes les actions
     players_backup = bot.gs_data['players'].copy()
     message_id_backup = bot.gs_data['message_id']
 
-    # Réinitialiser les actions
     bot.gs_data['defenses'] = {}
     bot.gs_data['tests'] = {}
     bot.gs_data['attacks'] = {}
 
-    # Restaurer la liste des joueurs et message_id
     bot.gs_data['players'] = players_backup
     bot.gs_data['message_id'] = message_id_backup
 
-    # D'abord répondre à l'interaction
     await interaction.response.send_message(
         "✅ Toutes les actions ont été réinitialisées. La liste des participants reste inchangée.",
         ephemeral=True
     )
 
-    # Puis mettre à jour le message épinglé
     await update_gs_message(interaction.channel)
 
 @bot.tree.command(name="add_star", description="Ajouter des étoiles à un participant")
@@ -507,7 +765,6 @@ async def add_star(
     nombre: app_commands.Choice[int]
 ):
     """Ajoute des étoiles à un participant"""
-    # Vérification du rôle
     if not has_required_role(interaction):
         await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
         return
@@ -524,10 +781,8 @@ async def add_star(
         await interaction.response.send_message(f"❌ {joueur.mention} n'est pas dans la liste des joueurs GS !", ephemeral=True)
         return
 
-    # Ajouter les étoiles
     bot.gs_data['stars'][joueur.id] = nombre.value
 
-    # Répondre et mettre à jour le tableau
     await interaction.response.send_message(
         f"✅ {nombre.value} étoile(s) {'a' if nombre.value == 1 else 'ont'} été ajoutée(s) à {joueur.mention}.",
         ephemeral=True
@@ -537,7 +792,6 @@ async def add_star(
 @bot.tree.command(name="gg", description="Féliciter les participants avec 3 étoiles")
 async def congratulate(interaction: discord.Interaction):
     """Félicite les participants avec 3 étoiles et remercie tout le monde"""
-    # Vérification du rôle
     if not has_required_role(interaction):
         await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
         return
@@ -550,14 +804,12 @@ async def congratulate(interaction: discord.Interaction):
         await interaction.response.send_message("Aucune GS n'est initialisée. Utilisez d'abord /init_gs", ephemeral=True)
         return
 
-    # Trouver les participants avec 3 étoiles
     three_stars = [
         bot.gs_data['players'][user_id]['mention']
         for user_id in bot.gs_data['players']
         if bot.gs_data['stars'].get(user_id, 0) >= 3
     ]
 
-    # Créer le message de félicitations
     embed = discord.Embed(
         title="🎉 Félicitations et Remerciements !",
         color=discord.Color.gold(),
@@ -571,7 +823,6 @@ async def congratulate(interaction: discord.Interaction):
             inline=False
         )
 
-    # Remercier tous les participants
     all_participants = [info['mention'] for info in bot.gs_data['players'].values()]
     embed.add_field(
         name="👏 Merci à tous les participants !",
@@ -585,8 +836,8 @@ async def congratulate(interaction: discord.Interaction):
 async def check_actions(interaction: discord.Interaction):
     """Affiche un résumé des actions manquantes pour chaque joueur"""
     if not has_required_role(interaction):
-            await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
-            return
+        await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
 
     if interaction.channel_id != GS_CHANNEL_ID:
         await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True)
@@ -603,7 +854,6 @@ async def check_actions(interaction: discord.Interaction):
         timestamp=datetime.datetime.now()
     )
 
-    # Vérifier les actions manquantes pour chaque joueur
     missing_def = []
     missing_test = []
     missing_atq = []
@@ -623,7 +873,6 @@ async def check_actions(interaction: discord.Interaction):
         else:
             all_done.append(player_info['mention'])
 
-    # Ajouter les champs au embed
     if missing_def:
         embed.add_field(name="❌ Défense manquante", value="\n".join(missing_def), inline=False)
     if missing_test:
@@ -641,6 +890,8 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"Commandes slash synchronisées : {len(synced)} commandes")
+        for cmd in synced:
+            print(f"- /{cmd.name}")
     except Exception as e:
         print(f"Erreur lors de la synchronisation des commandes : {e}")
 
