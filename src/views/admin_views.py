@@ -4,7 +4,7 @@ from src.config.settings import GS_CHANNEL_ID
 from src.config.constants import MAX_PLAYERS
 from src.utils.permissions import has_required_role
 from src.utils.embeds import create_admin_menu_embed, update_gs_message, create_check_actions_embed
-from src.views.selection_views import InitGSView, AddPlayerView, RemovePlayerView, AddStarView
+from src.views.selection_views import InitGSView, AddPlayerView, RemovePlayerView, AddStarView, ResetPlayerActionsView, MovePlayerView
 from src.bot.gs_bot import bot
 from src.commands.gs_commands import reset_all_actions, check_actions
 
@@ -74,7 +74,7 @@ class GSManagementView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(label="Reset Actions", emoji="🔄", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Reset All Actions", emoji="🔄", style=discord.ButtonStyle.danger)
     async def reset_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             if not has_required_role(interaction):
@@ -127,6 +127,29 @@ class GSManagementView(discord.ui.View):
                     "❌ Une erreur s'est produite lors de la réinitialisation des actions.",
                     ephemeral=True, delete_after=10
                 )
+
+    @discord.ui.button(label="Reset Joueur", emoji="🔁", style=discord.ButtonStyle.secondary)
+    async def reset_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_required_role(interaction):
+            await interaction.response.send_message(
+                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            return
+
+        if not bot.gs_data['players']:
+            await interaction.response.send_message(
+                "Aucun joueur dans la GS actuellement.",
+                ephemeral=True
+            )
+            return
+
+        view = ResetPlayerActionsView()
+        await interaction.response.send_message(
+            "Sélectionnez le joueur et l'action à réinitialiser :",
+            view=view,
+            ephemeral=True
+        )
 
     @discord.ui.button(label="Vérifier Actions", emoji="📋", style=discord.ButtonStyle.primary)
     async def check_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -227,6 +250,22 @@ class PlayerManagementView(discord.ui.View):
             ephemeral=True, delete_after=10
         )
 
+    @discord.ui.button(label="Position Joueur", emoji="↕️", style=discord.ButtonStyle.primary)
+    async def move_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not bot.gs_data['players']:
+            await interaction.response.send_message(
+                "Aucun joueur dans la GS actuellement.",
+                ephemeral=True
+            )
+            return
+
+        view = MovePlayerView()
+        await interaction.response.send_message(
+            "Sélectionnez le joueur à déplacer et sa nouvelle position :",
+            view=view,
+            ephemeral=True
+        )
+
     @discord.ui.button(label="Retour", emoji="◀️", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
@@ -243,46 +282,59 @@ class PerformanceManagementView(discord.ui.View):
 
     @discord.ui.button(label="Ajouter Étoiles", emoji="⭐", style=discord.ButtonStyle.success)
     async def add_star_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_required_role(interaction):
-            await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True, delete_after=10)
-            return
-
         if not bot.gs_data['players']:
             await interaction.response.send_message(
                 "Aucun joueur dans la GS actuellement.",
-                ephemeral=True, delete_after=10
+                ephemeral=True
             )
             return
 
-        view = AddStarView(bot.gs_data['players'])
+        view = AddStarView()  # Plus besoin de passer les joueurs en paramètre
         await interaction.response.send_message(
             "Sélectionnez un joueur et le nombre d'étoiles :",
             view=view,
-            ephemeral=True, delete_after=10
+            ephemeral=True,
+            delete_after=10
         )
 
     @discord.ui.button(label="GG", emoji="🎉", style=discord.ButtonStyle.primary)
     async def gg_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             if not has_required_role(interaction):
-                await interaction.response.send_message("❌ Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True, delete_after=10)
+                await interaction.response.send_message(
+                    "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                    ephemeral=True
+                )
                 return
 
             if interaction.channel_id != GS_CHANNEL_ID:
-                await interaction.response.send_message("Cette commande ne peut être utilisée que dans le salon GS !", ephemeral=True, delete_after=10)
+                await interaction.response.send_message(
+                    "Cette commande ne peut être utilisée que dans le salon GS !",
+                    ephemeral=True
+                )
                 return
 
             if not bot.gs_data['players']:
-                await interaction.response.send_message("Aucune GS n'est initialisée. Utilisez d'abord /init_gs", ephemeral=True, delete_after=10)
+                await interaction.response.send_message(
+                    "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
+                    ephemeral=True
+                )
                 return
 
-            # Différer la réponse
             await interaction.response.defer()
 
-            three_stars = [
+            # Joueurs avec 6 étoiles pour performances exceptionnelles
+            perfect_players = [
                 bot.gs_data['players'][user_id]['mention']
                 for user_id in bot.gs_data['players']
-                if bot.gs_data['stars'].get(user_id, 0) >= 3
+                if bot.gs_data['stars'].get(user_id, 0) == 6
+            ]
+
+            # Tous les participants avec leurs étoiles
+            all_players_with_stars = [
+                f"{info['mention']} ({bot.gs_data['stars'].get(user_id, 0)}⭐)"
+                for user_id, info in bot.gs_data['players'].items()
+                if bot.gs_data['stars'].get(user_id, 0) > 0
             ]
 
             embed = discord.Embed(
@@ -290,13 +342,21 @@ class PerformanceManagementView(discord.ui.View):
                 color=discord.Color.gold()
             )
 
-            if three_stars:
+            if perfect_players:
                 embed.add_field(
                     name="🌟 Performances Exceptionnelles !",
-                    value=f"Félicitations à nos champions avec 3 étoiles :\n{', '.join(three_stars)}",
+                    value=f"Félicitations à nos champions avec 6 étoiles :\n{', '.join(perfect_players)}",
                     inline=False
                 )
 
+            if all_players_with_stars:
+                embed.add_field(
+                    name="⭐ Résultats des attaques",
+                    value="\n".join(all_players_with_stars),
+                    inline=False
+                )
+
+            # Liste de tous les participants
             all_participants = [info['mention'] for info in bot.gs_data['players'].values()]
             embed.add_field(
                 name="👏 Merci à tous les participants !",
@@ -304,13 +364,12 @@ class PerformanceManagementView(discord.ui.View):
                 inline=False
             )
 
-            # Utiliser followup au lieu de response
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
             print(f"Erreur dans le bouton GG: {e}")
             if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Une erreur s'est produite.", ephemeral=True, delete_after=10)
+                await interaction.response.send_message("❌ Une erreur s'est produite.", ephemeral=True)
             else:
                 await interaction.followup.send("❌ Une erreur s'est produite.", ephemeral=True, delete_after=10)
 

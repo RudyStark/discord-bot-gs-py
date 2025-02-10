@@ -43,7 +43,9 @@ def create_check_actions_embed():
         if user_id not in bot.gs_data['attacks']:
             missing_atq.append(player_info['mention'])
         else:
-            all_done.append(f"{player_info['mention']} - Cible: {bot.gs_data['attacks'][user_id]}")
+            stars = bot.gs_data['stars'].get(user_id, 0)
+            star_display = f" ({stars}{'⭐' if stars > 0 else ''})" if stars > 0 else ""
+            all_done.append(f"{player_info['mention']} - Cible: {bot.gs_data['attacks'][user_id]}{star_display}")
 
     if missing_atq:
         embed.add_field(

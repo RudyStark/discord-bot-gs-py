@@ -11,14 +11,23 @@ async def action(interaction: discord.Interaction):
         if interaction.channel_id != GS_CHANNEL_ID:
             await interaction.response.send_message(
                 "Cette commande ne peut être utilisée que dans le salon GS !",
-                ephemeral=True, delete_after=10
+                ephemeral=True
             )
             return
 
+        # Vérifier si une GS est initialisée
+        if not bot.gs_data['players']:
+            await interaction.response.send_message(
+                "Aucune GS n'est initialisée actuellement.",
+                ephemeral=True
+            )
+            return
+
+        # Vérifier si l'utilisateur est dans la GS
         if interaction.user.id not in bot.gs_data['players']:
             await interaction.response.send_message(
                 f"{interaction.user.mention} vous n'êtes pas dans la liste des joueurs GS !",
-                ephemeral=True, delete_after=10
+                ephemeral=True
             )
             return
 
@@ -29,9 +38,12 @@ async def action(interaction: discord.Interaction):
         )
 
         view = ActionView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True, delete_after=10)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     except Exception as e:
         print(f"Erreur dans la commande action: {e}")
         if not interaction.response.is_done():
-            await interaction.response.send_message("Une erreur s'est produite.", ephemeral=True, delete_after=10)
+            await interaction.followup.send(
+                "❌ Une erreur s'est produite.",
+                ephemeral=True
+            )

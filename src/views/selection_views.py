@@ -1,6 +1,6 @@
 import discord
 from src.config.settings import GS_CHANNEL_ID
-from src.config.constants import MAX_PLAYERS
+from src.config.constants import MAX_PLAYERS, DEFENSE_EMOJI, TEST_EMOJI, ATTACK_EMOJI
 from src.commands.gs_commands import init_gs
 from src.bot.gs_bot import bot
 from src.utils.embeds import update_gs_message, create_gs_embed
@@ -76,43 +76,70 @@ class InitGSView(discord.ui.View):
         self.add_item(select)
 
 class AddStarView(discord.ui.View):
-    def __init__(self, gs_players):
+    def __init__(self):  # Supprimé le paramètre players car on accède directement à bot.gs_data
         super().__init__()
         self.selected_player = None
+
+        # Menu de sélection du joueur
+        player_options = [
+            discord.SelectOption(
+                label=player_info["name"],
+                description=f"Actuellement : {'⭐' * bot.gs_data['stars'].get(player_id, 0)}",
+                value=str(player_id)
+            )
+            for player_id, player_info in bot.gs_data['players'].items()
+        ]
+
+        while len(player_options) < 25:
+            player_options.append(
+                discord.SelectOption(
+                    label="━━━",
+                    description="Non disponible",
+                    value=f"dummy_{len(player_options)}"
+                )
+            )
+
+        # Menu de sélection du nombre d'étoiles
+        star_options = [
+            discord.SelectOption(label="1 étoile", value="1", emoji="⭐"),
+            discord.SelectOption(label="2 étoiles", value="2", emoji="⭐"),
+            discord.SelectOption(label="3 étoiles", value="3", emoji="⭐"),
+            discord.SelectOption(label="4 étoiles", value="4", emoji="⭐"),
+            discord.SelectOption(label="5 étoiles", value="5", emoji="⭐"),
+            discord.SelectOption(label="6 étoiles", value="6", emoji="⭐")
+        ]
 
         player_select = discord.ui.Select(
             placeholder="Sélectionnez un joueur",
             min_values=1,
             max_values=1,
-            options=[
-                discord.SelectOption(
-                    label=player_info["name"],
-                    value=str(player_id),
-                    description=f"ID: {player_id}"
-                )
-                for player_id, player_info in gs_players.items()
-            ]
+            options=player_options
         )
 
         star_select = discord.ui.Select(
-            placeholder="Nombre d'étoiles",
+            placeholder="Nombre d'étoiles total",
             min_values=1,
             max_values=1,
-            options=[
-                discord.SelectOption(label="1 étoile", value="1"),
-                discord.SelectOption(label="2 étoiles", value="2"),
-                discord.SelectOption(label="3 étoiles", value="3")
-            ]
+            options=star_options
         )
 
         async def player_callback(interaction: discord.Interaction):
+            if str(player_select.values[0]).startswith('dummy_'):
+                await interaction.response.send_message(
+                    "❌ Sélection invalide.",
+                    ephemeral=True
+                )
+                return
             self.selected_player = int(player_select.values[0])
             await interaction.response.defer()
 
         async def star_callback(interaction: discord.Interaction):
             try:
                 if not self.selected_player:
-                    await interaction.response.send_message("❌ Veuillez d'abord sélectionner un joueur.", ephemeral=True, delete_after=10)
+                    await interaction.response.send_message(
+                        "❌ Veuillez d'abord sélectionner un joueur.",
+                        ephemeral=True
+                    )
                     return
 
                 player = await interaction.guild.fetch_member(self.selected_player)
@@ -121,14 +148,17 @@ class AddStarView(discord.ui.View):
                 bot.gs_data['stars'][player.id] = stars
 
                 await interaction.response.send_message(
-                    f"✅ {stars} étoile(s) {'a' if stars == 1 else 'ont'} été ajoutée(s) à {player.mention}.",
-                    ephemeral=True, delete_after=10
+                    f"✅ {stars} étoile{'s' if stars > 1 else ''} attribuée{'s' if stars > 1 else ''} à {player.mention}.",
+                    ephemeral=True
                 )
                 await update_gs_message(interaction.channel)
 
             except Exception as e:
-                print(f"Erreur dans le callback des étoiles: {e}")
-                await interaction.response.send_message("❌ Une erreur s'est produite.", ephemeral=True, delete_after=10)
+                print(f"Erreur dans l'attribution des étoiles: {e}")
+                await interaction.response.send_message(
+                    "❌ Une erreur s'est produite.",
+                    ephemeral=True
+                )
 
         player_select.callback = player_callback
         star_select.callback = star_callback
@@ -291,3 +321,186 @@ class RemovePlayerView(discord.ui.View):
 
         select.callback = select_callback
         self.add_item(select)
+
+class ResetPlayerActionsView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+        # Menu de sélection du joueur
+        player_options = [
+            discord.SelectOption(
+                label=player_info["name"],
+                description=f"ID: {player_id}",
+                value=str(player_id)
+            )
+            for player_id, player_info in bot.gs_data['players'].items()
+        ]
+
+        player_select = discord.ui.Select(
+            placeholder="Sélectionnez le joueur",
+            min_values=1,
+            max_values=1,
+            options=player_options
+        )
+
+        # Menu de sélection de l'action
+        action_options = [
+            discord.SelectOption(label="Défense", value="defense", emoji=DEFENSE_EMOJI),
+            discord.SelectOption(label="Test", value="test", emoji=TEST_EMOJI),
+            discord.SelectOption(label="Attaque", value="attack", emoji=ATTACK_EMOJI),
+            discord.SelectOption(label="Toutes les actions", value="all", emoji="🔄")
+        ]
+
+        action_select = discord.ui.Select(
+            placeholder="Action à réinitialiser",
+            min_values=1,
+            max_values=1,
+            options=action_options
+        )
+
+        async def player_callback(interaction: discord.Interaction):
+            self.selected_player = int(player_select.values[0])
+            await interaction.response.defer()
+
+        async def action_callback(interaction: discord.Interaction):
+            try:
+                if not self.selected_player:
+                    await interaction.response.send_message(
+                        "❌ Veuillez d'abord sélectionner un joueur.",
+                        ephemeral=True
+                    )
+                    return
+
+                player = await interaction.guild.fetch_member(self.selected_player)
+                action = action_select.values[0]
+                message = ""
+
+                if action == "all":
+                    if self.selected_player in bot.gs_data['defenses']: del bot.gs_data['defenses'][self.selected_player]
+                    if self.selected_player in bot.gs_data['tests']: del bot.gs_data['tests'][self.selected_player]
+                    if self.selected_player in bot.gs_data['attacks']: del bot.gs_data['attacks'][self.selected_player]
+                    message = f"✅ Toutes les actions de {player.mention} ont été réinitialisées."
+                elif action == "defense":
+                    if self.selected_player in bot.gs_data['defenses']:
+                        del bot.gs_data['defenses'][self.selected_player]
+                        message = f"✅ La défense de {player.mention} a été réinitialisée."
+                    else:
+                        message = f"ℹ️ {player.mention} n'avait pas de défense enregistrée."
+                elif action == "test":
+                    if self.selected_player in bot.gs_data['tests']:
+                        del bot.gs_data['tests'][self.selected_player]
+                        message = f"✅ Le test de {player.mention} a été réinitialisé."
+                    else:
+                        message = f"ℹ️ {player.mention} n'avait pas de test enregistré."
+                elif action == "attack":
+                    if self.selected_player in bot.gs_data['attacks']:
+                        del bot.gs_data['attacks'][self.selected_player]
+                        message = f"✅ L'attaque de {player.mention} a été réinitialisée."
+                    else:
+                        message = f"ℹ️ {player.mention} n'avait pas d'attaque enregistrée."
+
+                await interaction.response.send_message(message, ephemeral=True)
+                await update_gs_message(interaction.channel)
+
+            except Exception as e:
+                print(f"Erreur dans le reset des actions: {e}")
+                await interaction.response.send_message(
+                    "❌ Une erreur s'est produite.",
+                    ephemeral=True
+                )
+
+        player_select.callback = player_callback
+        action_select.callback = action_callback
+
+        self.add_item(player_select)
+        self.add_item(action_select)
+
+class MovePlayerView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+
+        # Menu de sélection du joueur
+        player_options = [
+            discord.SelectOption(
+                label=player_info["name"],
+                description=f"Position actuelle: {i+1}",
+                value=str(player_id)
+            )
+            for i, (player_id, player_info) in enumerate(bot.gs_data['players'].items())
+        ]
+
+        player_select = discord.ui.Select(
+            placeholder="Sélectionnez le joueur à déplacer",
+            min_values=1,
+            max_values=1,
+            options=player_options
+        )
+
+        # Menu de sélection de la position
+        total_players = len(bot.gs_data['players'])
+        position_options = [
+            discord.SelectOption(
+                label=f"Position {pos}",
+                value=str(pos)
+            )
+            for pos in range(1, total_players + 1)
+        ]
+
+        position_select = discord.ui.Select(
+            placeholder="Sélectionnez la nouvelle position",
+            min_values=1,
+            max_values=1,
+            options=position_options
+        )
+
+        async def player_callback(interaction: discord.Interaction):
+            self.selected_player = int(player_select.values[0])
+            await interaction.response.defer()
+
+        async def position_callback(interaction: discord.Interaction):
+            try:
+                if not hasattr(self, 'selected_player'):
+                    await interaction.response.send_message(
+                        "❌ Veuillez d'abord sélectionner un joueur.",
+                        ephemeral=True
+                    )
+                    return
+
+                new_position = int(position_select.values[0])
+                player = await interaction.guild.fetch_member(self.selected_player)
+
+                # Réorganiser les joueurs
+                current_players = list(bot.gs_data['players'].items())
+                player_data = bot.gs_data['players'][self.selected_player]
+
+                # Retirer le joueur de sa position actuelle
+                current_players = [(id, data) for id, data in current_players if id != self.selected_player]
+
+                # Insérer le joueur à sa nouvelle position
+                current_players.insert(new_position - 1, (self.selected_player, player_data))
+
+                # Mettre à jour le dictionnaire avec le nouvel ordre
+                new_players = {}
+                for id, data in current_players:
+                    new_players[id] = data
+
+                bot.gs_data['players'] = new_players
+
+                await interaction.response.send_message(
+                    f"✅ {player.mention} a été déplacé en position {new_position}.",
+                    ephemeral=True
+                )
+                await update_gs_message(interaction.channel)
+
+            except Exception as e:
+                print(f"Erreur dans le déplacement du joueur: {e}")
+                await interaction.response.send_message(
+                    "❌ Une erreur s'est produite.",
+                    ephemeral=True
+                )
+
+        player_select.callback = player_callback
+        position_select.callback = position_callback
+
+        self.add_item(player_select)
+        self.add_item(position_select)
