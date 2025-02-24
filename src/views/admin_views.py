@@ -5,6 +5,7 @@ from src.config.constants import MAX_PLAYERS
 from src.utils.permissions import has_required_role
 from src.utils.embeds import create_admin_menu_embed, update_gs_message, create_check_actions_embed
 from src.views.selection_views import InitGSView, AddPlayerView, RemovePlayerView, AddStarView, ResetPlayerActionsView, MovePlayerView
+from src.views.confirm_end_gs_view import ConfirmEndGSView
 from src.bot.gs_bot import bot
 from src.commands.gs_commands import reset_all_actions, check_actions
 
@@ -54,6 +55,9 @@ class AdminCategoryView(discord.ui.View):
 class GSManagementView(discord.ui.View):
     def __init__(self):
         super().__init__()
+        # Import de la modal ici pour éviter les imports circulaires
+        from src.views.gs_end_views import EndGSModal
+        self.end_gs_modal = EndGSModal
 
     @discord.ui.button(label="Initialiser GS", emoji="🆕", style=discord.ButtonStyle.success)
     async def init_gs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -65,71 +69,18 @@ class GSManagementView(discord.ui.View):
             return
 
         channel = interaction.guild.get_channel(GS_CHANNEL_ID)
-        channel_members = channel.members
+        real_members = [m for m in channel.members if not m.bot]
 
-        view = InitGSView(channel_members)
+        view = InitGSView(channel.members)
         await interaction.response.send_message(
-            f"Sélectionnez les joueurs pour la GS (1-{MAX_PLAYERS} joueurs) :",
+            f"Il y a actuellement {len(real_members)} membre(s) disponible(s).\n"
+            f"Combien de joueurs fictifs souhaitez-vous ajouter ?",
             view=view,
             ephemeral=True
         )
 
-    @discord.ui.button(label="Reset All Actions", emoji="🔄", style=discord.ButtonStyle.danger)
-    async def reset_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            if not has_required_role(interaction):
-                await interaction.response.send_message(
-                    "❌ Vous n'avez pas la permission d'utiliser cette commande.",
-                    ephemeral=True, delete_after=10
-                )
-                return
-
-            if interaction.channel_id != GS_CHANNEL_ID:
-                await interaction.response.send_message(
-                    "Cette commande ne peut être utilisée que dans le salon GS !",
-                    ephemeral=True, delete_after=10
-                )
-                return
-
-            if not bot.gs_data['players']:
-                await interaction.response.send_message(
-                    "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
-                    ephemeral=True, delete_after=10
-                )
-                return
-
-            # Sauvegarde uniquement des données essentielles
-            players_backup = bot.gs_data['players'].copy()
-            message_id_backup = bot.gs_data['message_id']
-
-            # Réinitialisation complète de toutes les statistiques
-            bot.gs_data['defenses'] = {}
-            bot.gs_data['tests'] = {}
-            bot.gs_data['attacks'] = {}
-            bot.gs_data['stars'] = {}  # Ajout de la réinitialisation des étoiles
-
-            # Restauration uniquement des données essentielles
-            bot.gs_data['players'] = players_backup
-            bot.gs_data['message_id'] = message_id_backup
-
-            await interaction.response.send_message(
-                "✅ Toutes les actions et statistiques ont été réinitialisées. La liste des participants reste inchangée.",
-                ephemeral=True, delete_after=10
-            )
-
-            # Mise à jour du tableau
-            await update_gs_message(interaction.channel)
-
-        except Exception as e:
-            print(f"Erreur lors de la réinitialisation des actions : {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "❌ Une erreur s'est produite lors de la réinitialisation des actions.",
-                    ephemeral=True, delete_after=10
-                )
-
-    @discord.ui.button(label="Reset Joueur", emoji="🔁", style=discord.ButtonStyle.secondary)
-    async def reset_player_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Gérer Rotation", emoji="🔄", style=discord.ButtonStyle.primary)
+    async def manage_rotation(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not has_required_role(interaction):
             await interaction.response.send_message(
                 "❌ Vous n'avez pas la permission d'utiliser cette commande.",
@@ -139,20 +90,24 @@ class GSManagementView(discord.ui.View):
 
         if not bot.gs_data['players']:
             await interaction.response.send_message(
-                "Aucun joueur dans la GS actuellement.",
+                "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
                 ephemeral=True
             )
             return
 
-        view = ResetPlayerActionsView()
+        from src.views.rotation_view import PlayerRotationView
+        view = PlayerRotationView()
         await interaction.response.send_message(
-            "Sélectionnez le joueur et l'action à réinitialiser :",
+            "🔄 Gestion de la rotation des joueurs\n"
+            "1. Sélectionnez un titulaire à remplacer\n"
+            "2. Sélectionnez un remplaçant à promouvoir\n"
+            "3. Validez la rotation",
             view=view,
             ephemeral=True
         )
 
-    @discord.ui.button(label="Vérifier Actions", emoji="📋", style=discord.ButtonStyle.primary)
-    async def check_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Reset Actions", emoji="♻️", style=discord.ButtonStyle.danger)
+    async def reset_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             if not has_required_role(interaction):
                 await interaction.response.send_message(
@@ -175,29 +130,105 @@ class GSManagementView(discord.ui.View):
                 )
                 return
 
-            # Utiliser defer pour indiquer que nous allons répondre
-            await interaction.response.defer()
+            # Sauvegarder les données importantes
+            players_backup = bot.gs_data['players'].copy()
+            message_id_backup = bot.gs_data['message_id']
 
-            # Créer et envoyer le message de vérification
-            check_message = await interaction.channel.send(embed=create_check_actions_embed())
-            # Épingler le message
-            await check_message.pin(reason="Suivi des actions GS")
+            # Réinitialiser les actions
+            bot.gs_data['defenses'] = {}
+            bot.gs_data['tests'] = {}
+            bot.gs_data['attacks'] = {}
 
-            # Stocker l'ID du message pour les mises à jour futures
-            bot.gs_data['check_message_id'] = check_message.id
+            # Restaurer les données sauvegardées
+            bot.gs_data['players'] = players_backup
+            bot.gs_data['message_id'] = message_id_backup
 
-            # Confirmer à l'utilisateur
-            await interaction.followup.send(
-                "✅ Le tableau de suivi des actions a été créé et épinglé.",
+            await interaction.response.send_message(
+                "✅ Toutes les actions ont été réinitialisées. La liste des participants reste inchangée.",
                 ephemeral=True
             )
+
+            await update_gs_message(interaction.channel)
 
         except Exception as e:
-            print(f"Erreur lors de la vérification des actions : {e}")
-            await interaction.followup.send(
-                "❌ Une erreur s'est produite lors de la vérification des actions.",
+            print(f"Erreur lors de la réinitialisation des actions : {e}")
+            await interaction.response.send_message(
+                "❌ Une erreur s'est produite lors de la réinitialisation des actions.",
                 ephemeral=True
             )
+
+    @discord.ui.button(label="Vérifier Actions", emoji="📋", style=discord.ButtonStyle.primary)
+    async def check_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_required_role(interaction):
+            await interaction.response.send_message(
+                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            return
+
+        if not bot.gs_data['players']:
+            await interaction.response.send_message(
+                "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
+                ephemeral=True
+            )
+            return
+
+        embed = create_check_actions_embed()
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Télécharger Exports", emoji="📊", style=discord.ButtonStyle.success)
+    async def download_exports_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_required_role(interaction):
+            await interaction.response.send_message(
+                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            return
+
+        # Importer ici pour éviter les imports circulaires
+        from src.views.export_views import ExportSelectionView
+
+        view = ExportSelectionView()
+        await interaction.response.send_message(
+            "📊 Sélectionnez le type d'export à télécharger :",
+            view=view,
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Fin de GS", emoji="🏁", style=discord.ButtonStyle.danger)
+    async def end_gs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not has_required_role(interaction):
+            await interaction.response.send_message(
+                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                ephemeral=True
+            )
+            return
+
+        if not bot.gs_data['players']:
+            await interaction.response.send_message(
+                "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
+                ephemeral=True
+            )
+            return
+
+        # Vérifier les étoiles des titulaires
+        missing_stars = []
+        for user_id, player_info in bot.gs_data['players'].items():
+            if player_info.get('status', 'titulaire') == 'titulaire':
+                stars = bot.gs_data['stars'].get(user_id, 0)
+                if stars == 0:  # Le joueur n'a pas d'étoiles
+                    missing_stars.append(player_info['mention'])
+
+        if missing_stars:
+            await interaction.response.send_message(
+                f"⚠️ Les titulaires suivants n'ont pas encore obtenu d'étoiles :\n"
+                f"{', '.join(missing_stars)}\n\n"
+                f"Voulez-vous quand même terminer la GS ?",
+                view=ConfirmEndGSView(self.end_gs_modal),
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_modal(self.end_gs_modal())
 
     @discord.ui.button(label="Retour", emoji="◀️", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):

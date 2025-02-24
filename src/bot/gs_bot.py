@@ -14,7 +14,8 @@ class GSBot(commands.Bot):
             'tests': {},
             'attacks': {},
             'stars': {},
-            'message_id': None
+            'message_id': None,
+            'season_start': None
         }
 
     async def setup_hook(self):

@@ -10,73 +10,142 @@ class InitGSView(discord.ui.View):
     def __init__(self, channel_members):
         super().__init__()
 
-        options = []
-        # Ajouter les vrais membres
-        for member in channel_members:
-            if not member.bot:
-                options.append(
+        # Récupérer uniquement les vrais membres (non bots)
+        self.real_players = [
+            member for member in channel_members
+            if not member.bot
+        ]
+
+        # Menu de sélection du nombre de joueurs fictifs
+        dummy_select = discord.ui.Select(
+            placeholder="Nombre de joueurs fictifs à ajouter",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label=str(i),
+                    value=str(i),
+                    description=f"Ajouter {i} joueur(s) fictif(s)"
+                )
+                for i in range(10)  # Limité à 10 joueurs fictifs
+            ]
+        )
+
+        async def dummy_select_callback(interaction: discord.Interaction):
+            try:
+                num_dummies = int(dummy_select.values[0])
+
+                # Créer les options pour les vrais joueurs
+                real_options = [
                     discord.SelectOption(
                         label=member.display_name,
                         description=f"ID: {member.id}",
                         value=str(member.id)
                     )
+                    for member in self.real_players
+                ]
+
+                # Ajouter les options pour les joueurs fictifs
+                dummy_options = [
+                    discord.SelectOption(
+                        label=f"Joueur Test {i+1}",
+                        description="Joueur fictif pour tests",
+                        value=f"test_{i}"
+                    )
+                    for i in range(num_dummies)
+                ]
+
+                all_options = real_options + dummy_options
+                total_players = len(all_options)
+
+                # Créer le menu de sélection des joueurs
+                player_select = discord.ui.Select(
+                    placeholder="Sélectionnez les joueurs participants",
+                    min_values=1,  # Au moins 1 joueur
+                    max_values=total_players,  # Jusqu'au nombre total disponible
+                    options=all_options
                 )
 
-        # Ajouter des options factices jusqu'à atteindre 25
-        dummy_count = 25 - len(options)
-        for i in range(dummy_count):
-            options.append(
-                discord.SelectOption(
-                    label=f"━━━",  # Utiliser un séparateur visuel
-                    description="Non disponible",
-                    value=f"dummy_{i}"
-                )
-            )
+                async def player_select_callback(player_interaction: discord.Interaction):
+                    selected_players = []
+                    has_test_players = False
 
-        select = discord.ui.Select(
-            placeholder="Sélectionnez les joueurs",
-            min_values=1,
-            max_values=min(25, len([opt for opt in options if not str(opt.value).startswith('dummy_')])),
-            options=options
-        )
+                    for value in player_select.values:
+                        if value.startswith('test_'):
+                            has_test_players = True
+                            index = int(value.split('_')[1]) + 1
+                            selected_players.append({
+                                'id': value,
+                                'name': f"Joueur Test {index}",
+                                'is_test': True
+                            })
+                        else:
+                            member = await player_interaction.guild.fetch_member(int(value))
+                            selected_players.append({
+                                'id': int(value),
+                                'name': member.display_name,
+                                'is_test': False
+                            })
 
-        async def select_callback(interaction: discord.Interaction):
-            try:
-                user_ids = [int(value) for value in select.values if not str(value).startswith('dummy_')]
-                players = [await interaction.guild.fetch_member(user_id) for user_id in user_ids]
+                    # Initialiser les données
+                    bot.gs_data['players'] = {}
+                    bot.gs_data['defenses'] = {}
+                    bot.gs_data['tests'] = {}
+                    bot.gs_data['attacks'] = {}
+                    bot.gs_data['stars'] = {}
+                    bot.gs_data['message_id'] = None
 
-                bot.gs_data['players'] = {}
-                bot.gs_data['defenses'] = {}
-                bot.gs_data['tests'] = {}
-                bot.gs_data['attacks'] = {}
-                bot.gs_data['stars'] = {}
-                bot.gs_data['message_id'] = None
+                    # Ajouter tous les joueurs, par défaut comme titulaires
+                    for player in selected_players:
+                        if player['is_test']:
+                            bot.gs_data['players'][player['id']] = {
+                                "name": player['name'],
+                                "mention": player['name'],
+                                "status": "titulaire"  # Tous titulaires par défaut
+                            }
+                        else:
+                            member = await player_interaction.guild.fetch_member(player['id'])
+                            bot.gs_data['players'][player['id']] = {
+                                "name": member.display_name,
+                                "mention": member.mention,
+                                "status": "titulaire"  # Tous titulaires par défaut
+                            }
 
-                for player in players:
-                    bot.gs_data['players'][player.id] = {
-                        "name": player.display_name,
-                        "mention": player.mention
-                    }
+                    # Créer et épingler le message du tableau GS
+                    message = await player_interaction.channel.send(embed=create_gs_embed())
+                    await message.pin(reason="Tableau GS")
+                    bot.gs_data['message_id'] = message.id
 
-                message = await interaction.channel.send(embed=create_gs_embed())
-                await message.pin(reason="Tableau GS")
-                bot.gs_data['message_id'] = message.id
+                    await player_interaction.response.edit_message(
+                        content=f"✅ GS initialisée avec succès !\n"
+                            f"• {len(selected_players)} joueur(s) ajouté(s)\n"
+                            + ("\n⚠️ Mode test avec joueurs fictifs" if has_test_players else ""),
+                        view=None
+                    )
 
-                await interaction.response.send_message(
-                    f"✅ Guerre Sainte initialisée avec {len(players)} participant(s) !",
-                    ephemeral=True, delete_after=10
+                player_select.callback = player_select_callback
+                view = discord.ui.View()
+                view.add_item(player_select)
+
+                await interaction.response.edit_message(
+                    content=f"Vous avez choisi d'ajouter {num_dummies} joueur(s) fictif(s).\n"
+                           f"Total disponible : {len(self.real_players)} réels + {num_dummies} fictifs = {total_players} joueurs\n"
+                           f"Sélectionnez les joueurs participants :",
+                    view=view
                 )
 
             except Exception as e:
-                print(f"Erreur dans le callback de sélection: {e}")
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("❌ Une erreur s'est produite.", ephemeral=True, delete_after=10)
+                print(f"Erreur dans dummy_select_callback: {e}")
+                await interaction.response.send_message(
+                    "Une erreur s'est produite.",
+                    ephemeral=True
+                )
 
-        select.callback = select_callback
-        self.add_item(select)
+        dummy_select.callback = dummy_select_callback
+        self.add_item(dummy_select)
 
 class AddStarView(discord.ui.View):
-    def __init__(self):  # Supprimé le paramètre players car on accède directement à bot.gs_data
+    def __init__(self):
         super().__init__()
         self.selected_player = None
 
@@ -90,23 +159,13 @@ class AddStarView(discord.ui.View):
             for player_id, player_info in bot.gs_data['players'].items()
         ]
 
-        while len(player_options) < 25:
-            player_options.append(
-                discord.SelectOption(
-                    label="━━━",
-                    description="Non disponible",
-                    value=f"dummy_{len(player_options)}"
-                )
-            )
-
-        # Menu de sélection du nombre d'étoiles
+        # Menu de sélection du nombre d'étoiles (maintenant jusqu'à 6)
         star_options = [
-            discord.SelectOption(label="1 étoile", value="1", emoji="⭐"),
-            discord.SelectOption(label="2 étoiles", value="2", emoji="⭐"),
-            discord.SelectOption(label="3 étoiles", value="3", emoji="⭐"),
-            discord.SelectOption(label="4 étoiles", value="4", emoji="⭐"),
-            discord.SelectOption(label="5 étoiles", value="5", emoji="⭐"),
-            discord.SelectOption(label="6 étoiles", value="6", emoji="⭐")
+            discord.SelectOption(label=f"{i} étoile{'s' if i > 1 else ''}",
+                               value=str(i),
+                               emoji="⭐",
+                               description=f"Total pour {i//3} attaque{'s' if i > 3 else ''} réussie{'s' if i > 3 else ''}")
+            for i in range(1, 7)  # de 1 à 6 étoiles
         ]
 
         player_select = discord.ui.Select(
@@ -117,7 +176,7 @@ class AddStarView(discord.ui.View):
         )
 
         star_select = discord.ui.Select(
-            placeholder="Nombre d'étoiles total",
+            placeholder="Nombre d'étoiles total (2 attaques max)",
             min_values=1,
             max_values=1,
             options=star_options
@@ -145,10 +204,21 @@ class AddStarView(discord.ui.View):
                 player = await interaction.guild.fetch_member(self.selected_player)
                 stars = int(star_select.values[0])
 
+                # Vérification du nombre d'étoiles
+                if stars > 6:
+                    await interaction.response.send_message(
+                        "❌ Le nombre maximum d'étoiles est de 6 (2 attaques × 3 étoiles).",
+                        ephemeral=True
+                    )
+                    return
+
                 bot.gs_data['stars'][player.id] = stars
 
+                # Calcul du nombre d'attaques réussies
+                attaques_reussies = (stars + 2) // 3  # Arrondi supérieur
                 await interaction.response.send_message(
-                    f"✅ {stars} étoile{'s' if stars > 1 else ''} attribuée{'s' if stars > 1 else ''} à {player.mention}.",
+                    f"✅ {stars} étoile{'s' if stars > 1 else ''} attribuée{'s' if stars > 1 else ''} à {player.mention}\n"
+                    f"📊 Correspond à {attaques_reussies} attaque{'s' if attaques_reussies > 1 else ''} réussie{'s' if attaques_reussies > 1 else ''}",
                     ephemeral=True
                 )
                 await update_gs_message(interaction.channel)
@@ -414,6 +484,97 @@ class ResetPlayerActionsView(discord.ui.View):
 
         self.add_item(player_select)
         self.add_item(action_select)
+
+class SelectRemplacantView(discord.ui.View):
+    def __init__(self, selected_players: list, has_test_players: bool):
+        super().__init__()
+        self.has_test_players = has_test_players
+
+        # Créer les options pour les vrais joueurs
+        player_options = [
+            discord.SelectOption(
+                label=player['name'],
+                value=str(player['id'])
+            )
+            for player in selected_players
+        ]
+
+        # Ajouter des options fictives si nécessaire pour atteindre le minimum de 4
+        dummy_count = max(0, 4 - len(player_options))
+        dummy_options = [
+            discord.SelectOption(
+                label=f"━━━",
+                description="Non disponible",
+                value=f"dummy_{i}",
+                default=True  # Les options fictives sont présélectionnées
+            )
+            for i in range(dummy_count)
+        ]
+
+        all_options = player_options + dummy_options
+
+        # Menu pour sélectionner les remplaçants
+        select = discord.ui.Select(
+            placeholder="Choisir les remplaçants",
+            min_values=min(4, len(player_options)),  # Ajuster min_values selon le nombre de joueurs
+            max_values=min(4, len(player_options)),  # Ajuster max_values selon le nombre de joueurs
+            options=all_options
+        )
+
+        async def select_callback(interaction: discord.Interaction):
+            try:
+                # Filtrer les valeurs non-dummy
+                remplacant_ids = [
+                    value for value in select.values
+                    if not str(value).startswith('dummy_')
+                ]
+
+                # Initialiser les données
+                bot.gs_data['players'] = {}
+                bot.gs_data['defenses'] = {}
+                bot.gs_data['tests'] = {}
+                bot.gs_data['attacks'] = {}
+                bot.gs_data['stars'] = {}
+                bot.gs_data['message_id'] = None
+
+                # Ajouter tous les joueurs avec leur statut
+                for player in selected_players:
+                    if player['is_test']:
+                        bot.gs_data['players'][player['id']] = {
+                            "name": player['name'],
+                            "mention": player['name'],
+                            "status": "remplacant" if player['id'] in remplacant_ids else "titulaire"
+                        }
+                    else:
+                        member = await interaction.guild.fetch_member(player['id'])
+                        bot.gs_data['players'][player['id']] = {
+                            "name": member.display_name,
+                            "mention": member.mention,
+                            "status": "remplacant" if player['id'] in remplacant_ids else "titulaire"
+                        }
+
+                # Créer et épingler le message du tableau GS
+                message = await interaction.channel.send(embed=create_gs_embed())
+                await message.pin(reason="Tableau GS")
+                bot.gs_data['message_id'] = message.id
+
+                titulaires = len(selected_players) - len(remplacant_ids)
+                await interaction.response.edit_message(
+                    content=f"✅ GS initialisée avec succès !\n"
+                           f"• {titulaires} titulaires\n"
+                           f"• {len(remplacant_ids)} remplaçants",
+                    view=None
+                )
+
+            except Exception as e:
+                print(f"Erreur lors de la sélection des remplaçants : {e}")
+                await interaction.response.send_message(
+                    "Une erreur s'est produite.",
+                    ephemeral=True
+                )
+
+        select.callback = select_callback
+        self.add_item(select)
 
 class MovePlayerView(discord.ui.View):
     def __init__(self):
