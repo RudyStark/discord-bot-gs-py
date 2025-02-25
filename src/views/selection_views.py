@@ -16,133 +16,80 @@ class InitGSView(discord.ui.View):
             if not member.bot
         ]
 
-        # Menu de sélection du nombre de joueurs fictifs
-        dummy_select = discord.ui.Select(
-            placeholder="Nombre de joueurs fictifs à ajouter",
-            min_values=1,
-            max_values=1,
-            options=[
-                discord.SelectOption(
-                    label=str(i),
-                    value=str(i),
-                    description=f"Ajouter {i} joueur(s) fictif(s)"
-                )
-                for i in range(10)  # Limité à 10 joueurs fictifs
-            ]
+        # Créer les options pour les joueurs
+        player_options = [
+            discord.SelectOption(
+                label=member.display_name,
+                description=f"ID: {member.id}",
+                value=str(member.id)
+            )
+            for member in self.real_players
+        ]
+
+        # Menu de sélection des joueurs
+        player_select = discord.ui.Select(
+            placeholder="Sélectionnez les joueurs participants",
+            min_values=1,  # Au moins 1 joueur
+            max_values=min(MAX_PLAYERS, len(player_options)),  # Jusqu'au maximum autorisé
+            options=player_options
         )
 
-        async def dummy_select_callback(interaction: discord.Interaction):
+        async def player_select_callback(interaction: discord.Interaction):
             try:
-                num_dummies = int(dummy_select.values[0])
+                selected_user_ids = [int(value) for value in player_select.values]
 
-                # Créer les options pour les vrais joueurs
-                real_options = [
-                    discord.SelectOption(
-                        label=member.display_name,
-                        description=f"ID: {member.id}",
-                        value=str(member.id)
-                    )
-                    for member in self.real_players
-                ]
+                # Initialiser les données
+                bot.gs_data['players'] = {}
+                bot.gs_data['defenses'] = {}
+                bot.gs_data['tests'] = {}
+                bot.gs_data['attacks'] = {}
+                bot.gs_data['stars'] = {}
+                bot.gs_data['message_id'] = None
 
-                # Ajouter les options pour les joueurs fictifs
-                dummy_options = [
-                    discord.SelectOption(
-                        label=f"Joueur Test {i+1}",
-                        description="Joueur fictif pour tests",
-                        value=f"test_{i}"
-                    )
-                    for i in range(num_dummies)
-                ]
+                # Récupérer les membres
+                members = []
+                for user_id in selected_user_ids:
+                    try:
+                        member = await interaction.guild.fetch_member(user_id)
+                        members.append(member)
+                    except discord.NotFound:
+                        continue
 
-                all_options = real_options + dummy_options
-                total_players = len(all_options)
+                # Ajouter tous les joueurs comme titulaires
+                for i, member in enumerate(members):
+                    status = "titulaire" if i < 20 else "remplacant"  # Les 20 premiers sont titulaires
+                    bot.gs_data['players'][member.id] = {
+                        "name": member.display_name,
+                        "mention": member.mention,
+                        "status": status
+                    }
 
-                # Créer le menu de sélection des joueurs
-                player_select = discord.ui.Select(
-                    placeholder="Sélectionnez les joueurs participants",
-                    min_values=1,  # Au moins 1 joueur
-                    max_values=total_players,  # Jusqu'au nombre total disponible
-                    options=all_options
-                )
+                # Créer et épingler le message du tableau GS
+                message = await interaction.channel.send(embed=create_gs_embed())
+                await message.pin(reason="Tableau GS")
+                bot.gs_data['message_id'] = message.id
 
-                async def player_select_callback(player_interaction: discord.Interaction):
-                    selected_players = []
-                    has_test_players = False
-
-                    for value in player_select.values:
-                        if value.startswith('test_'):
-                            has_test_players = True
-                            index = int(value.split('_')[1]) + 1
-                            selected_players.append({
-                                'id': value,
-                                'name': f"Joueur Test {index}",
-                                'is_test': True
-                            })
-                        else:
-                            member = await player_interaction.guild.fetch_member(int(value))
-                            selected_players.append({
-                                'id': int(value),
-                                'name': member.display_name,
-                                'is_test': False
-                            })
-
-                    # Initialiser les données
-                    bot.gs_data['players'] = {}
-                    bot.gs_data['defenses'] = {}
-                    bot.gs_data['tests'] = {}
-                    bot.gs_data['attacks'] = {}
-                    bot.gs_data['stars'] = {}
-                    bot.gs_data['message_id'] = None
-
-                    # Ajouter tous les joueurs, par défaut comme titulaires
-                    for player in selected_players:
-                        if player['is_test']:
-                            bot.gs_data['players'][player['id']] = {
-                                "name": player['name'],
-                                "mention": player['name'],
-                                "status": "titulaire"  # Tous titulaires par défaut
-                            }
-                        else:
-                            member = await player_interaction.guild.fetch_member(player['id'])
-                            bot.gs_data['players'][player['id']] = {
-                                "name": member.display_name,
-                                "mention": member.mention,
-                                "status": "titulaire"  # Tous titulaires par défaut
-                            }
-
-                    # Créer et épingler le message du tableau GS
-                    message = await player_interaction.channel.send(embed=create_gs_embed())
-                    await message.pin(reason="Tableau GS")
-                    bot.gs_data['message_id'] = message.id
-
-                    await player_interaction.response.edit_message(
-                        content=f"✅ GS initialisée avec succès !\n"
-                            f"• {len(selected_players)} joueur(s) ajouté(s)\n"
-                            + ("\n⚠️ Mode test avec joueurs fictifs" if has_test_players else ""),
-                        view=None
-                    )
-
-                player_select.callback = player_select_callback
-                view = discord.ui.View()
-                view.add_item(player_select)
+                # Compter les titulaires et remplaçants
+                titulaires = sum(1 for p in bot.gs_data['players'].values() if p.get('status') == 'titulaire')
+                remplacants = sum(1 for p in bot.gs_data['players'].values() if p.get('status') == 'remplacant')
 
                 await interaction.response.edit_message(
-                    content=f"Vous avez choisi d'ajouter {num_dummies} joueur(s) fictif(s).\n"
-                           f"Total disponible : {len(self.real_players)} réels + {num_dummies} fictifs = {total_players} joueurs\n"
-                           f"Sélectionnez les joueurs participants :",
-                    view=view
+                    content=f"✅ GS initialisée avec succès !\n"
+                           f"• {titulaires} titulaire(s)\n"
+                           f"• {remplacants} remplaçant(s)\n"
+                           f"• {len(bot.gs_data['players'])} joueur(s) au total",
+                    view=None
                 )
 
             except Exception as e:
-                print(f"Erreur dans dummy_select_callback: {e}")
+                print(f"Erreur dans player_select_callback: {e}")
                 await interaction.response.send_message(
-                    "Une erreur s'est produite.",
+                    "❌ Une erreur s'est produite lors de l'initialisation de la GS.",
                     ephemeral=True
                 )
 
-        dummy_select.callback = dummy_select_callback
-        self.add_item(dummy_select)
+        player_select.callback = player_select_callback
+        self.add_item(player_select)
 
 class AddStarView(discord.ui.View):
     def __init__(self):

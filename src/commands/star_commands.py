@@ -17,7 +17,7 @@ async def add_star(interaction: discord.Interaction, joueur: discord.Member, nom
     bot.gs_data['stars'][joueur.id] = nombre.value
     await interaction.response.send_message(
         f"✅ {nombre.value} étoile(s) ajoutée(s) à {joueur.mention}.",
-        ephemeral=True, delete_after=10
+        ephemeral=True
     )
     await update_gs_message(interaction.channel)
     return True

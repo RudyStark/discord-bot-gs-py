@@ -1,6 +1,6 @@
 {
   "date": "2025-02-24",
-  "guild_name": "dsdssd",
+  "guild_name": "OLB",
   "participants": [
     {
       "id": "861536212056408094",
@@ -10,7 +10,7 @@
       "stars": 6,
       "defense": null,
       "test": null,
-      "attack": null
+      "attack": 2
     }
   ]
 }

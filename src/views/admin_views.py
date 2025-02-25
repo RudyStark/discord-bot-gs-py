@@ -74,7 +74,7 @@ class GSManagementView(discord.ui.View):
         view = InitGSView(channel.members)
         await interaction.response.send_message(
             f"Il y a actuellement {len(real_members)} membre(s) disponible(s).\n"
-            f"Combien de joueurs fictifs souhaitez-vous ajouter ?",
+            f"Combien de joueurs participent à la GS ? (1-{MAX_PLAYERS})",
             view=view,
             ephemeral=True
         )
@@ -159,22 +159,84 @@ class GSManagementView(discord.ui.View):
 
     @discord.ui.button(label="Vérifier Actions", emoji="📋", style=discord.ButtonStyle.primary)
     async def check_actions_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_required_role(interaction):
-            await interaction.response.send_message(
-                "❌ Vous n'avez pas la permission d'utiliser cette commande.",
-                ephemeral=True
-            )
-            return
+        try:
+            if not has_required_role(interaction):
+                await interaction.response.send_message(
+                    "❌ Vous n'avez pas la permission d'utiliser cette commande.",
+                    ephemeral=True
+                )
+                return
 
-        if not bot.gs_data['players']:
-            await interaction.response.send_message(
-                "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
-                ephemeral=True
-            )
-            return
+            if interaction.channel_id != GS_CHANNEL_ID:
+                await interaction.response.send_message(
+                    "Cette commande ne peut être utilisée que dans le salon GS !",
+                    ephemeral=True
+                )
+                return
 
-        embed = create_check_actions_embed()
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            if not bot.gs_data['players']:
+                await interaction.response.send_message(
+                    "Aucune GS n'est initialisée. Utilisez d'abord /init_gs",
+                    ephemeral=True
+                )
+                return
+
+            # Utiliser defer pour indiquer que nous allons répondre
+            await interaction.response.defer()
+
+            # Créer l'embed pour vérifier les actions
+            embed = create_check_actions_embed()
+
+            # Vérifier si un message de suivi existe déjà
+            if bot.gs_data.get('check_message_id'):
+                try:
+                    # Tenter de récupérer le message existant
+                    check_message = await interaction.channel.fetch_message(bot.gs_data['check_message_id'])
+
+                    # Mettre à jour le message existant
+                    await check_message.edit(embed=embed)
+
+                    # Confirmer à l'utilisateur
+                    await interaction.followup.send(
+                        "✅ Le tableau de suivi des actions a été mis à jour.",
+                        ephemeral=True
+                    )
+
+                except discord.NotFound:
+                    # Si le message n'existe plus, en créer un nouveau
+                    check_message = await interaction.channel.send(embed=embed)
+                    await check_message.pin(reason="Suivi des actions GS")
+                    bot.gs_data['check_message_id'] = check_message.id
+
+                    # Confirmer à l'utilisateur
+                    await interaction.followup.send(
+                        "✅ Un nouveau tableau de suivi des actions a été créé et épinglé.",
+                        ephemeral=True
+                    )
+            else:
+                # Créer et épingler un nouveau message
+                check_message = await interaction.channel.send(embed=embed)
+                await check_message.pin(reason="Suivi des actions GS")
+                bot.gs_data['check_message_id'] = check_message.id
+
+                # Confirmer à l'utilisateur
+                await interaction.followup.send(
+                    "✅ Le tableau de suivi des actions a été créé et épinglé.",
+                    ephemeral=True
+                )
+
+        except Exception as e:
+            print(f"Erreur lors de la vérification des actions : {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ Une erreur s'est produite lors de la vérification des actions.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ Une erreur s'est produite lors de la vérification des actions.",
+                    ephemeral=True
+                )
 
     @discord.ui.button(label="Télécharger Exports", emoji="📊", style=discord.ButtonStyle.success)
     async def download_exports_button(self, interaction: discord.Interaction, button: discord.ui.Button):

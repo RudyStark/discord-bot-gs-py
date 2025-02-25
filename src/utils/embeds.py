@@ -100,13 +100,11 @@ def create_gs_embed():
 
     # Statistiques globales
     total_stars = sum(bot.gs_data['stars'].values())
-    total_attacks = len([p for p in bot.gs_data['attacks'].values() if p is not None])
 
     stats_text = [
         f"Titulaires: {len(titulaires)}/20",
         f"Remplaçants: {len(remplacants)}/4",
-        f"Étoiles: {total_stars}⭐",
-        f"Attaques: {total_attacks}/{len(titulaires)*2}"
+        f"Étoiles: {total_stars}⭐"
     ]
 
     embed.add_field(
@@ -177,7 +175,9 @@ async def update_gs_message(channel):
                 check_message = await channel.fetch_message(bot.gs_data['check_message_id'])
                 await check_message.edit(embed=create_check_actions_embed())
             except discord.NotFound:
-                pass
+                # Le message n'existe plus, on ne fait rien
+                # Optionnellement, on peut effacer l'ID du message pour éviter de futures tentatives
+                bot.gs_data.pop('check_message_id', None)
 
         return True
     except Exception as e:
